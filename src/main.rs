@@ -22,19 +22,18 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
-const CommitteeSize : usize = 5;
-const AuxPointX: u32 = 310816354;
-const AuxPointY: u32 = 2077510353;
-const MinusOne: u32 = 2^31 -1 -1;
-const ATE: u32 = MinusOne;
-const DTE: u32 = 6;
+const COMMITTEE_SIZE : usize = 5;
+const AUX_POINT_X: u32 = 310816354;
+const AUX_POINT_Y: u32 = 2077510353;
+const MINUS_ONE: u32 = 2^31 -1 -1;
+const ATE: u32 = MINUS_ONE;
 
 pub struct Plonky3Sum {
     pub apk_x: u32,
     pub apk_y: u32,
-    pub pk_x : [u32; CommitteeSize],
-    pub pk_y : [u32; CommitteeSize],
-    pub participated: [u8; CommitteeSize],
+    pub pk_x : [u32; COMMITTEE_SIZE],
+    pub pk_y : [u32; COMMITTEE_SIZE],
+    pub participated: [u8; COMMITTEE_SIZE],
 }
 
 impl<F: PrimeField32> BaseAir<F> for Plonky3Sum {
@@ -57,8 +56,8 @@ impl<AB: AirBuilder> Air<AB> for Plonky3Sum where AB::F :  PrimeField32, {
         let kacc_y = 5;
 
         let a_edwards = AB::F::from_canonical_u32(ATE);
-        let aux_point_x = AB::F::from_canonical_u32(AuxPointX);
-        let aux_point_y = AB::F::from_canonical_u32(AuxPointY);
+        let aux_point_x = AB::F::from_canonical_u32(AUX_POINT_X);
+        let aux_point_y = AB::F::from_canonical_u32(AUX_POINT_Y);
 
         // Enforce starting values
         builder.when_first_row().assert_eq(local[index], AB::Expr::zero());
@@ -91,30 +90,30 @@ impl<AB: AirBuilder> Air<AB> for Plonky3Sum where AB::F :  PrimeField32, {
     }
 }
 
-pub fn generate_apk_trace<F: Field+PrimeField32>(pk_x : [u32; CommitteeSize],
-     pk_y : [u32; CommitteeSize], participated: [u8; CommitteeSize]) -> RowMajorMatrix<F> {
+pub fn generate_apk_trace<F: Field+PrimeField32>(pk_x : [u32; COMMITTEE_SIZE],
+     pk_y : [u32; COMMITTEE_SIZE], participated: [u8; COMMITTEE_SIZE]) -> RowMajorMatrix<F> {
 
     let a_edwards = F::from_canonical_u32(ATE);
 
-    let mut last_accumulation_x : F = F::from_canonical_u32(AuxPointX);
-    let mut last_accumulation_y : F = F::from_canonical_u32(AuxPointY);
+    let mut last_accumulation_x : F = F::from_canonical_u32(AUX_POINT_X);
+    let mut last_accumulation_y : F = F::from_canonical_u32(AUX_POINT_Y);
     
-    let mut values = Vec::with_capacity(CommitteeSize * 6);
+    let mut values = Vec::with_capacity(COMMITTEE_SIZE * 6);
     values.push(F::zero()); //index
     values.push(F::zero()); //selector
     values.push(F::zero()); //value for pk_x[0] is ignored.
     values.push(F::zero()); //value for pk_y[0] is ignored.
     values.push(last_accumulation_x);
     values.push(last_accumulation_y);
-    for i in 0..CommitteeSize + 1 {
+    for i in 0..COMMITTEE_SIZE {
         //get  accumulation before pushing
         values.push(F::from_canonical_u32(i.try_into().unwrap()));
-        values.push(F::from_canonical_u8(participated[i-1]));
-        values.push(F::from_canonical_u32(pk_x[i-1]));
-        values.push(F::from_canonical_u32(pk_y[i-1]));
-        if participated[i-1] == 1 {
-            let new_acc_x = (last_accumulation_x*last_accumulation_y + F::from_canonical_u32(pk_y[i-1])*F::from_canonical_u32(pk_x[i-1]))/(last_accumulation_y*F::from_canonical_u32(pk_y[i-1]) + a_edwards * last_accumulation_x * F::from_canonical_u32(pk_x[i-1]));
-            let  new_acc_y = (last_accumulation_x*last_accumulation_y - F::from_canonical_u32(pk_y[i-1])*F::from_canonical_u32(pk_x[i-1]))/(last_accumulation_x*F::from_canonical_u32(pk_y[i-1]) - last_accumulation_y*F::from_canonical_u32(pk_x[i-1]));
+        values.push(F::from_canonical_u8(participated[i]));
+        values.push(F::from_canonical_u32(pk_x[i]));
+        values.push(F::from_canonical_u32(pk_y[i]));
+        if participated[i] == 1 {
+            let new_acc_x = (last_accumulation_x*last_accumulation_y + F::from_canonical_u32(pk_y[i])*F::from_canonical_u32(pk_x[i]))/(last_accumulation_y*F::from_canonical_u32(pk_y[i]) + a_edwards * last_accumulation_x * F::from_canonical_u32(pk_x[i]));
+            let  new_acc_y = (last_accumulation_x*last_accumulation_y - F::from_canonical_u32(pk_y[i])*F::from_canonical_u32(pk_x[i]))/(last_accumulation_x*F::from_canonical_u32(pk_y[i]) - last_accumulation_y*F::from_canonical_u32(pk_x[i]));
             values.push(new_acc_x);
             values.push(new_acc_y);
             last_accumulation_x = new_acc_x;
@@ -178,7 +177,7 @@ fn main() -> Result<(), impl Debug> { let env_filter =
 
                                       let apk_x = 445907341;
                                       let apk_y =  511523144;
-                                      let participated : [u8; CommitteeSize] = [1,0,1,1,0];
+                                      let participated : [u8; COMMITTEE_SIZE] = [1,0,1,1,0];
 
                                       
 
