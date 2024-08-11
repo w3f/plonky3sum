@@ -22,10 +22,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
-const COMMITTEE_SIZE : usize = 5;
+const COMMITTEE_SIZE : usize = 7; // has to be 2^n - 1
 const AUX_POINT_X: u32 = 310816354;
 const AUX_POINT_Y: u32 = 2077510353;
-const MINUS_ONE: u32 = 2^31 -1 -1;
+const MINUS_ONE: u32 = 2147483646; //2^31 -1 -1;
 const ATE: u32 = MINUS_ONE;
 
 pub struct Plonky3Sum {
@@ -59,34 +59,38 @@ impl<AB: AirBuilder> Air<AB> for Plonky3Sum where AB::F :  PrimeField32, {
         let aux_point_x = AB::F::from_canonical_u32(AUX_POINT_X);
         let aux_point_y = AB::F::from_canonical_u32(AUX_POINT_Y);
 
-        // Enforce starting values
+        //Enforce starting values
         builder.when_first_row().assert_eq(local[index], AB::Expr::zero());
-        builder.when_first_row().assert_eq(local[selector_bit], AB::Expr::zero());
+        builder.when_first_row().assert_eq(local[selector_bit], AB::F::from_canonical_u8(self.participated[0]));
         builder.when_first_row().assert_eq(local[kacc_x], aux_point_x);
         builder.when_first_row().assert_eq(local[kacc_y], aux_point_y);
 
-        // Enforce all kown values in first 3 columns        
-        //builder.when_transition().assert_eq(local[selector_bit],self.participated[local[index].as_canonical_u32()]);
-        //builder.when_transition().assert_eq(local[pk_x],self.pk_x[local[index].as_canonical_u32()]);
-        //builder.when_transition().assert_eq(local[pk_y],self.pk_y[local[index]]);
+        //Enforce that selector bit is a bit.
+        builder.when_transition().assert_zero((local[selector_bit]) * (AB::Expr::one()-local[selector_bit]));
+        //Enforce all kown values in first 3 columns        
+        // builder.when_transition().assert_eq(local[selector_bit],self.participated[local[index].as_canonical_u32()]);
+        // builder.when_transition().assert_eq(local[pk_x],self.pk_x[local[index].as_canonical_u32()]);
+        // builder.when_transition().assert_eq(local[pk_y],self.pk_y[local[index]]);
         
-        // Enforce state transition constraints
+        //Enforce state transition constraints
         //index should grow one by one
         builder.when_transition().assert_eq(next[index], local[index] + AB::Expr::one());
 
         //x coordinate of accumulation should be correct
         builder.when_transition().assert_eq(local[selector_bit]*(next[kacc_x] * (local[kacc_y]*local[pk_y] + AB::Expr::from(a_edwards) * local[kacc_x]*local[pk_x]) - local[kacc_x]*local[kacc_y] - local[pk_y]*local[pk_x]) + (AB::Expr::one()-local[selector_bit])*(next[kacc_x]-local[kacc_x]), AB::Expr::zero());
         //y coordinate of accumulation should be correct
-        builder.when_transition().assert_eq(local[selector_bit]*(next[kacc_y] * (local[kacc_x]*local[pk_y] - local[kacc_y]*local[pk_x]) - local[kacc_x]*local[kacc_y] + local[pk_y]*local[pk_x]) + (AB::Expr::one()-local[selector_bit])*(next[kacc_y]-local[kacc_y]), AB::Expr::zero());
+        builder.when_transition().assert_eq(local[selector_bit]*(next[kacc_y] * (local[kacc_x]*local[pk_y] - local[kacc_y]*local[pk_x]) - local[kacc_x]*local[kacc_y] + local[pk_y]*local[pk_x])
 
-       // Constrain the final value
+                                            + (AB::Expr::one()-local[selector_bit])*(next[kacc_y]-local[kacc_y]), AB::Expr::zero());
+
+       //Constrain the final value
        let apk_x = AB::F::from_canonical_u32(self.apk_x);
        let apk_y = AB::F::from_canonical_u32(self.apk_y);
 
        let final_value_x = (apk_x*apk_y + aux_point_y*aux_point_x)/(apk_y*aux_point_y + a_edwards * apk_x * aux_point_x);
        let final_value_y = (apk_x*apk_y - aux_point_y*aux_point_x)/(apk_x*aux_point_y - apk_y*aux_point_x);
         builder.when_last_row().assert_eq(local[kacc_x], final_value_x);
-        builder.when_last_row().assert_eq(local[kacc_x], final_value_y);
+        builder.when_last_row().assert_eq(local[kacc_y], final_value_y);
     }
 }
 
@@ -100,24 +104,32 @@ pub fn generate_apk_trace<F: Field+PrimeField32>(pk_x : [u32; COMMITTEE_SIZE],
     
     let mut values = Vec::with_capacity(COMMITTEE_SIZE * 6);
     values.push(F::zero()); //index
-    values.push(F::zero()); //selector
-    values.push(F::zero()); //value for pk_x[0] is ignored.
-    values.push(F::zero()); //value for pk_y[0] is ignored.
+    values.push(F::from_canonical_u8(participated[0])); //selector
+    values.push(F::from_canonical_u32(pk_x[0]));
+    values.push(F::from_canonical_u32(pk_y[0]));
     values.push(last_accumulation_x);
     values.push(last_accumulation_y);
-    for i in 0..COMMITTEE_SIZE {
-        //get  accumulation before pushing
-        values.push(F::from_canonical_u32(i.try_into().unwrap()));
-        values.push(F::from_canonical_u8(participated[i]));
-        values.push(F::from_canonical_u32(pk_x[i]));
-        values.push(F::from_canonical_u32(pk_y[i]));
-        if participated[i] == 1 {
-            let new_acc_x = (last_accumulation_x*last_accumulation_y + F::from_canonical_u32(pk_y[i])*F::from_canonical_u32(pk_x[i]))/(last_accumulation_y*F::from_canonical_u32(pk_y[i]) + a_edwards * last_accumulation_x * F::from_canonical_u32(pk_x[i]));
-            let  new_acc_y = (last_accumulation_x*last_accumulation_y - F::from_canonical_u32(pk_y[i])*F::from_canonical_u32(pk_x[i]))/(last_accumulation_x*F::from_canonical_u32(pk_y[i]) - last_accumulation_y*F::from_canonical_u32(pk_x[i]));
+    for i in 1..COMMITTEE_SIZE + 1 {        
+        values.push(F::from_canonical_u32((i).try_into().unwrap()));
+        if (i < COMMITTEE_SIZE) {
+            //get  accumulation before pushing
+            values.push(F::from_canonical_u8(participated[i]));
+            values.push(F::from_canonical_u32(pk_x[i]));
+            values.push(F::from_canonical_u32(pk_y[i]));
+        } else {
+            //final row is just the aggregation plus the initial value so we fill up the rest of columns with dummies
+            values.push(F::zero());
+            values.push(F::zero());
+            values.push(F::zero());
+        }
+            
+        if participated[i-1] == 1 { //using the previous row the faith of this row is decided 
+            let new_acc_x = (last_accumulation_x*last_accumulation_y + F::from_canonical_u32(pk_y[i-1])*F::from_canonical_u32(pk_x[i-1]))/(last_accumulation_y*F::from_canonical_u32(pk_y[i-1]) + a_edwards * last_accumulation_x * F::from_canonical_u32(pk_x[i-1]));
+            let  new_acc_y = (last_accumulation_x*last_accumulation_y - F::from_canonical_u32(pk_y[i-1])*F::from_canonical_u32(pk_x[i-1]))/(last_accumulation_x*F::from_canonical_u32(pk_y[i-1]) - last_accumulation_y*F::from_canonical_u32(pk_x[i-1]));
             values.push(new_acc_x);
-            values.push(new_acc_y);
+            values.push(new_acc_y.clone());
             last_accumulation_x = new_acc_x;
-            last_accumulation_y = new_acc_y;
+            last_accumulation_y = new_acc_y.clone();
         } else {
             values.push(last_accumulation_x);
             values.push(last_accumulation_y);
@@ -126,8 +138,10 @@ pub fn generate_apk_trace<F: Field+PrimeField32>(pk_x : [u32; COMMITTEE_SIZE],
 
     RowMajorMatrix::new(values, 6)
 }
-fn main() -> Result<(), impl Debug> { let env_filter =
-    EnvFilter::builder()
+fn main() -> Result<(), impl Debug> {
+    let env_filter =
+
+        EnvFilter::builder()
     .with_default_directive(LevelFilter::INFO.into())
     .from_env_lossy();
 
@@ -135,8 +149,9 @@ fn main() -> Result<(), impl Debug> { let env_filter =
         .with(env_filter)
         .with(ForestLayer::default())
         .init();
+    
 
-    type Val = Mersenne31;
+    type Val = Mersenne31;   
     type Challenge = BinomialExtensionField<Val, 3>;
 
     type ByteHash = Keccak256Hash;
@@ -172,14 +187,27 @@ fn main() -> Result<(), impl Debug> { let env_filter =
     type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
     let config = MyConfig::new(pcs);
 
-    let pk_x = [1452990225,1415979279,2387338,761104766,346876432];
-    let pk_y = [221038753,1396649897,1532407746,8593518,1281517386];
 
-                                      let apk_x = 445907341;
-                                      let apk_y =  511523144;
-                                      let participated : [u8; COMMITTEE_SIZE] = [1,0,1,1,0];
-
+    let pk_x = [1452990225,1415979279,2387338,761104766,346876432, 1452990225, 1415979279];
+    let pk_y = [221038753,1396649897,1532407746,8593518,1281517386, 221038753, 1396649897];
                                       
+    //let apk_x = 1452990225;
+    //let apk_y = 221038753;
+    //let apk_x = 1415979279;
+    //let apk_y = 1396649897;
+    //let apk_x = 445907341;
+    //let apk_y =  511523144;
+
+    let apk_x = 2105811123;
+    let apk_y = 1146185955;
+
+    //let apk_x = 1483543816;
+    //let apk_y = 1461149278;
+
+    let participated : [u8; COMMITTEE_SIZE] = [1,0,1,1,0, 0,0];
+    //let participated : [u8; COMMITTEE_SIZE] = [1,1,0,0,0];
+    //let participated : [u8; COMMITTEE_SIZE] = [1,0,0,0,0];
+    //let participated : [u8; COMMITTEE_SIZE] = [0,1,0,0,0];
 
     let air = Plonky3Sum { apk_x, apk_y, pk_x, pk_y, participated };
     let trace = generate_apk_trace::<Val>(pk_x, pk_y, participated);

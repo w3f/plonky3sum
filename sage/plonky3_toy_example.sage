@@ -64,8 +64,42 @@ print(apk)
 # [(1452990225, 221038753), (1415979279, 1396649897), (2387338, 1532407746), (761104766, 8593518), (346876432, 1281517386), (1452990225, 221038753), (1415979279, 1396649897), (2387338, 1532407746), (761104766, 8593518), (346876432, 1281517386)]
 #(445907341, 511523144)
 
-for i in range(0,5):
+for i in range(0,7):
     print(pks[i][0])
 
-for i in range(0,5):
+for i in range(0,7):
     print(pks[i][1])
+
+pks_ws[0]
+(1763544472 : 347099778 : 1)
+h_ws = E(1507648288,1742713665)
+pks_ws[0] + h_ws
+(1613814520 : 810948524 : 1)
+test_apk_p_h = pks_ws[0] + h_ws
+(1613814520 : 810948524 : 1)
+
+test_apk_p_h_ed = Point_WeierstrassToEdwards(F, E.a4(), E.a6(), test_apk_p_h[0],test_apk_p_h[1], -1, 6)
+
+print(test_apk_p_h_ed)
+(1217658547, 62813588)
+
+
+def add_te(F, a, d, p1, p2):
+    p3 = []
+    p3.append((p1[0]*p1[1] + p2[1]*p2[0])/(p1[1]*p2[1] + a * p1[0] * p2[0]))
+    p3.append((p1[0]*p1[1] - p2[1]*p2[0])/(p1[0]*p2[1] - p1[1]*p2[0]))
+    return p3
+
+b = [1,1,0,0,0]
+apk_te = pks[0]
+for i in range(1,5):
+    if b[i] == 1:
+        apk_te = add_te(F, F(-1), F(6), apk_te, pks[i])
+
+apk_te_h = he
+for i in range(0,5):
+    if b[i] == 1:
+        print(apk_te_h)
+        apk_te_h = add_te(F, F(-1), F(6), apk_te_h, pks[i])
+
+    
