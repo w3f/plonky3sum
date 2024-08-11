@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use p3_air::{Air, AirBuilder, BaseAir};
-use p3_field::{AbstractField, Field};
+use p3_field::{AbstractField, Field, PrimeField32};
 use p3_matrix::Matrix;
 use p3_matrix::dense::RowMajorMatrix;
 
@@ -22,55 +22,115 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
-pub struct FibonacciAir {
-    pub num_steps: usize,
-    pub final_value: u32,
+const CommitteeSize : usize = 5;
+const AuxPointX: u32 = 310816354;
+const AuxPointY: u32 = 2077510353;
+const MinusOne: u32 = 2^31 -1 -1;
+const ATE: u32 = MinusOne;
+const DTE: u32 = 6;
+
+pub struct Plonky3Sum {
+    pub apk_x: u32,
+    pub apk_y: u32,
+    pub pk_x : [u32; CommitteeSize],
+    pub pk_y : [u32; CommitteeSize],
+    pub participated: [u8; CommitteeSize],
 }
 
-impl<F: Field> BaseAir<F> for FibonacciAir {
+impl<F: PrimeField32> BaseAir<F> for Plonky3Sum {
     fn width(&self) -> usize {
-        2 // For current and next Fibonacci number
+        6 // index bit map, Px,Py, kacc_x, k_aacy
     }
 }
 
-impl<AB: AirBuilder> Air<AB> for FibonacciAir {
+impl<AB: AirBuilder> Air<AB> for Plonky3Sum where AB::F :  PrimeField32, {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let local = main.row_slice(0);
         let next = main.row_slice(1);
 
+        let index = 0;
+        let selector_bit = 1;
+        let pk_x = 2;
+        let pk_y = 3;
+        let kacc_x = 4;
+        let kacc_y = 5;
+
+        let a_edwards = AB::F::from_canonical_u32(ATE);
+        let aux_point_x = AB::F::from_canonical_u32(AuxPointX);
+        let aux_point_y = AB::F::from_canonical_u32(AuxPointY);
+
         // Enforce starting values
-        builder.when_first_row().assert_eq(local[0], AB::Expr::zero());
-        builder.when_first_row().assert_eq(local[1], AB::Expr::one());
+        builder.when_first_row().assert_eq(local[index], AB::Expr::zero());
+        builder.when_first_row().assert_eq(local[selector_bit], AB::Expr::zero());
+        builder.when_first_row().assert_eq(local[kacc_x], aux_point_x);
+        builder.when_first_row().assert_eq(local[kacc_y], aux_point_y);
 
+        // Enforce all kown values in first 3 columns        
+        //builder.when_transition().assert_eq(local[selector_bit],self.participated[local[index].as_canonical_u32()]);
+        //builder.when_transition().assert_eq(local[pk_x],self.pk_x[local[index].as_canonical_u32()]);
+        //builder.when_transition().assert_eq(local[pk_y],self.pk_y[local[index]]);
+        
         // Enforce state transition constraints
-        builder.when_transition().assert_eq(next[0], local[1]);
-        builder.when_transition().assert_eq(next[1], local[0] + local[1]);
+        //index should grow one by one
+        builder.when_transition().assert_eq(next[index], local[index] + AB::Expr::one());
 
-        // Constrain the final value
-        let final_value = AB::Expr::from_canonical_u32(self.final_value);
-        builder.when_last_row().assert_eq(local[1], final_value);
+        //x coordinate of accumulation should be correct
+        builder.when_transition().assert_eq(local[selector_bit]*(next[kacc_x] * (local[kacc_y]*local[pk_y] + AB::Expr::from(a_edwards) * local[kacc_x]*local[pk_x]) - local[kacc_x]*local[kacc_y] - local[pk_y]*local[pk_x]) + (AB::Expr::one()-local[selector_bit])*(next[kacc_x]-local[kacc_x]), AB::Expr::zero());
+        //y coordinate of accumulation should be correct
+        builder.when_transition().assert_eq(local[selector_bit]*(next[kacc_y] * (local[kacc_x]*local[pk_y] - local[kacc_y]*local[pk_x]) - local[kacc_x]*local[kacc_y] + local[pk_y]*local[pk_x]) + (AB::Expr::one()-local[selector_bit])*(next[kacc_y]-local[kacc_y]), AB::Expr::zero());
+
+       // Constrain the final value
+       let apk_x = AB::F::from_canonical_u32(self.apk_x);
+       let apk_y = AB::F::from_canonical_u32(self.apk_y);
+
+       let final_value_x = (apk_x*apk_y + aux_point_y*aux_point_x)/(apk_y*aux_point_y + a_edwards * apk_x * aux_point_x);
+       let final_value_y = (apk_x*apk_y - aux_point_y*aux_point_x)/(apk_x*aux_point_y - apk_y*aux_point_x);
+        builder.when_last_row().assert_eq(local[kacc_x], final_value_x);
+        builder.when_last_row().assert_eq(local[kacc_x], final_value_y);
     }
 }
 
-pub fn generate_fibonacci_trace<F: Field>(num_steps: usize) -> RowMajorMatrix<F> {
-    let mut values = Vec::with_capacity(num_steps * 2);
-    let mut a = F::zero();
-    let mut b = F::one();
-    for _ in 0..num_steps {
-        values.push(a);
-        values.push(b);
-        let c = a + b;
-        a = b;
-        b = c;
-    }
-    RowMajorMatrix::new(values, 2)
-}
+pub fn generate_apk_trace<F: Field+PrimeField32>(pk_x : [u32; CommitteeSize],
+     pk_y : [u32; CommitteeSize], participated: [u8; CommitteeSize]) -> RowMajorMatrix<F> {
 
-fn main() -> Result<(), impl Debug> {
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env_lossy();
+    let a_edwards = F::from_canonical_u32(ATE);
+
+    let mut last_accumulation_x : F = F::from_canonical_u32(AuxPointX);
+    let mut last_accumulation_y : F = F::from_canonical_u32(AuxPointY);
+    
+    let mut values = Vec::with_capacity(CommitteeSize * 6);
+    values.push(F::zero()); //index
+    values.push(F::zero()); //selector
+    values.push(F::zero()); //value for pk_x[0] is ignored.
+    values.push(F::zero()); //value for pk_y[0] is ignored.
+    values.push(last_accumulation_x);
+    values.push(last_accumulation_y);
+    for i in 0..CommitteeSize + 1 {
+        //get  accumulation before pushing
+        values.push(F::from_canonical_u32(i.try_into().unwrap()));
+        values.push(F::from_canonical_u8(participated[i-1]));
+        values.push(F::from_canonical_u32(pk_x[i-1]));
+        values.push(F::from_canonical_u32(pk_y[i-1]));
+        if participated[i-1] == 1 {
+            let new_acc_x = (last_accumulation_x*last_accumulation_y + F::from_canonical_u32(pk_y[i-1])*F::from_canonical_u32(pk_x[i-1]))/(last_accumulation_y*F::from_canonical_u32(pk_y[i-1]) + a_edwards * last_accumulation_x * F::from_canonical_u32(pk_x[i-1]));
+            let  new_acc_y = (last_accumulation_x*last_accumulation_y - F::from_canonical_u32(pk_y[i-1])*F::from_canonical_u32(pk_x[i-1]))/(last_accumulation_x*F::from_canonical_u32(pk_y[i-1]) - last_accumulation_y*F::from_canonical_u32(pk_x[i-1]));
+            values.push(new_acc_x);
+            values.push(new_acc_y);
+            last_accumulation_x = new_acc_x;
+            last_accumulation_y = new_acc_y;
+        } else {
+            values.push(last_accumulation_x);
+            values.push(last_accumulation_y);
+        }
+    }
+
+    RowMajorMatrix::new(values, 6)
+}
+fn main() -> Result<(), impl Debug> { let env_filter =
+    EnvFilter::builder()
+    .with_default_directive(LevelFilter::INFO.into())
+    .from_env_lossy();
 
     Registry::default()
         .with(env_filter)
@@ -113,10 +173,17 @@ fn main() -> Result<(), impl Debug> {
     type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
     let config = MyConfig::new(pcs);
 
-    let num_steps = 8; // Choose the number of Fibonacci steps
-    let final_value = 21; // Choose the final Fibonacci value
-    let air = FibonacciAir { num_steps, final_value };
-    let trace = generate_fibonacci_trace::<Val>(num_steps);
+    let pk_x = [1452990225,1415979279,2387338,761104766,346876432];
+    let pk_y = [221038753,1396649897,1532407746,8593518,1281517386];
+
+                                      let apk_x = 445907341;
+                                      let apk_y =  511523144;
+                                      let participated : [u8; CommitteeSize] = [1,0,1,1,0];
+
+                                      
+
+    let air = Plonky3Sum { apk_x, apk_y, pk_x, pk_y, participated };
+    let trace = generate_apk_trace::<Val>(pk_x, pk_y, participated);
 
     let mut challenger = Challenger::from_hasher(vec![], byte_hash);
     let proof = prove(&config, &air, &mut challenger, trace, &vec![]);
